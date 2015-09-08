@@ -1,18 +1,13 @@
 from decimal import Decimal
 import random
 
-from waffle.utils import get_setting, keyfmt
+import django
+
+from waffle.utils import get_setting
 
 
 VERSION = (0, 10, 1)
 __version__ = '.'.join(map(str, VERSION))
-
-
-class DoesNotExist(object):
-    """The record does not exist."""
-    @property
-    def active(self):
-        return get_setting('SWITCH_DEFAULT')
 
 
 def set_flag(request, flag_name, active=True, session_only=False):
@@ -23,16 +18,12 @@ def set_flag(request, flag_name, active=True, session_only=False):
 
 
 def flag_is_active(request, flag_name):
-    from .models import cache_flag, Flag
-    from .compat import cache
+    from .models import Flag, get_flag_group_ids, get_flag_user_ids
 
-    flag = cache.get(keyfmt(get_setting('FLAG_CACHE_KEY'), flag_name))
-    if flag is None:
-        try:
-            flag = Flag.objects.get(name=flag_name)
-            cache_flag(instance=flag)
-        except Flag.DoesNotExist:
-            return get_setting('FLAG_DEFAULT')
+    try:
+        flag = Flag.objects.get(name=flag_name)
+    except Flag.DoesNotExist:
+        return get_setting('FLAG_DEFAULT')
 
     if get_setting('OVERRIDE'):
         if flag_name in request.GET:
@@ -71,23 +62,21 @@ def flag_is_active(request, flag_name):
                 request.LANGUAGE_CODE in languages):
             return True
 
-    flag_users = cache.get(keyfmt(get_setting('FLAG_USERS_CACHE_KEY'),
-                                              flag.name))
-    if flag_users is None:
-        flag_users = flag.users.all()
-        cache_flag(instance=flag)
-    if user in flag_users:
+    flag_user_ids = get_flag_user_ids(flag)
+    if user.id in flag_user_ids:
         return True
 
-    flag_groups = cache.get(keyfmt(get_setting('FLAG_GROUPS_CACHE_KEY'),
-                                   flag.name))
-    if flag_groups is None:
-        flag_groups = flag.groups.all()
-        cache_flag(instance=flag)
-    user_groups = user.groups.all()
-    for group in flag_groups:
-        if group in user_groups:
-            return True
+    flag_group_ids = get_flag_group_ids(flag)
+    if len(flag_group_ids) > 0:
+        try:
+            user_group_ids = set(user.groups.all().values_list('id', flat=True))
+        except AttributeError:
+            django_version = django.VERSION
+            if django_version[0] != 1 or django_version[1] > 5:
+                raise
+        else:
+            if len(user_group_ids & flag_group_ids) > 0:
+                return True
 
     if flag.percent and flag.percent > 0:
         if not hasattr(request, 'waffles'):
@@ -110,31 +99,19 @@ def flag_is_active(request, flag_name):
 
 
 def switch_is_active(switch_name):
-    from .models import cache_switch, Switch
-    from .compat import cache
+    from .models import Switch
 
-    switch = cache.get(keyfmt(get_setting('SWITCH_CACHE_KEY'), switch_name))
-    if switch is None:
-        try:
-            switch = Switch.objects.get(name=switch_name)
-            cache_switch(instance=switch)
-        except Switch.DoesNotExist:
-            switch = DoesNotExist()
-            switch.name = switch_name
-            cache_switch(instance=switch)
-    return switch.active
+    try:
+        return Switch.objects.get(name=switch_name).active
+    except Switch.DoesNotExist:
+        return get_setting('SWITCH_DEFAULT')
 
 
 def sample_is_active(sample_name):
-    from .models import cache_sample, Sample
-    from .compat import cache
+    from .models import Sample
 
-    sample = cache.get(keyfmt(get_setting('SAMPLE_CACHE_KEY'), sample_name))
-    if sample is None:
-        try:
-            sample = Sample.objects.get(name=sample_name)
-            cache_sample(instance=sample)
-        except Sample.DoesNotExist:
-            return get_setting('SAMPLE_DEFAULT')
-
+    try:
+        sample = Sample.objects.get(name=sample_name)
+    except Sample.DoesNotExist:
+        return get_setting('SAMPLE_DEFAULT')
     return Decimal(str(random.uniform(0, 100))) <= sample.percent

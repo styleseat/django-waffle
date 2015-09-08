@@ -16,6 +16,5 @@ urlpatterns = patterns('',
     url(r'^switch-off', views.switched_off_view),
     url(r'^flag-on', views.flagged_view),
     url(r'^flag-off', views.flagged_off_view),
-    (r'^', include('waffle.urls')),
     (r'^admin/', include(admin.site.urls))
 )

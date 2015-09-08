@@ -24,7 +24,6 @@ def process_request(request, view):
     response = view(request)
     return WaffleMiddleware().process_response(request, response)
 
-
 class WaffleTests(TestCase):
     def test_persist_active_flag(self):
         Flag.objects.create(name='myflag', percent='0.1')
@@ -128,6 +127,19 @@ class WaffleTests(TestCase):
         self.assertEqual(b'off', response.content)
         assert 'dwf_myflag' not in response.cookies
 
+    def test_user_cache(self):
+        user = User.objects.create(username='foo')
+        flag = Flag.objects.create(name='myflag')
+        flag.users.add(user)
+
+        request = get()
+        request.user = user
+        response = process_request(request, views.flag_in_view)
+        self.assertEqual(b'on', response.content)
+        with self.assertNumQueries(1):
+            response = process_request(request, views.flag_in_view)
+        self.assertEqual(b'on', response.content)
+
     def test_group(self):
         """Test the per-group switch."""
         group = Group.objects.create(name='foo')
@@ -148,6 +160,22 @@ class WaffleTests(TestCase):
         response = process_request(request, views.flag_in_view)
         self.assertEqual(b'off', response.content)
         assert 'dwf_myflag' not in response.cookies
+
+    def test_group_cache(self):
+        group = Group.objects.create(name='foo')
+        user = User.objects.create(username='bar')
+        user.groups.add(group)
+
+        flag = Flag.objects.create(name='myflag')
+        flag.groups.add(group)
+
+        request = get()
+        request.user = user
+        response = process_request(request, views.flag_in_view)
+        self.assertEqual(b'on', response.content)
+        with self.assertNumQueries(2):
+            response = process_request(request, views.flag_in_view)
+        self.assertEqual(b'on', response.content)
 
     def test_authenticated(self):
         """Test the authenticated/anonymous switch."""
@@ -320,11 +348,7 @@ class SwitchTests(TestCase):
         assert not Switch.objects.filter(name='foo').exists()
         queries = len(connection.queries)
         assert not waffle.switch_is_active('foo')
-        assert len(connection.queries) > queries, 'We should make one query.'
-        queries = len(connection.queries)
-        assert not waffle.switch_is_active('foo')
-        self.assertEqual(queries, len(connection.queries), 'We should only make one query.')
-
+        assert len(connection.queries) == queries+1, 'We should make one query.'
 
 class SampleTests(TestCase):
     def test_sample_100(self):

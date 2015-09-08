@@ -7,5 +7,7 @@ dist
 .coverage
 .project
 .pydevproject
+.python-version
 .settings
+.tox/
 docs/_*

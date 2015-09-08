@@ -1,7 +1,9 @@
+import time
 try:
     from django.utils import timezone as datetime
 except ImportError:
     from datetime import datetime
+from datetime import datetime as pydatetime
 
 from django.contrib.auth.models import Group
 from django.db import models
@@ -110,27 +112,39 @@ class Sample(models.Model):
         super(Sample, self).save(*args, **kwargs)
 
 
-def cache_flag(**kwargs):
-    action = kwargs.get('action', None)
-    # action is included for m2m_changed signal. Only cache on the post_*.
-    if not action or action in ['post_add', 'post_remove', 'post_clear']:
-        f = kwargs.get('instance')
-        cache.add(keyfmt(get_setting('FLAG_CACHE_KEY'), f.name), f)
-        cache.add(keyfmt(get_setting('FLAG_USERS_CACHE_KEY'), f.name),
-                  f.users.all())
-        cache.add(keyfmt(get_setting('FLAG_GROUPS_CACHE_KEY'), f.name),
-                  f.groups.all())
+def _flag_cache_key(flag, key_name_setting):
+    return keyfmt(get_setting(key_name_setting), flag.name)
+
+
+def _get_flag_idset(flag, key_name_setting, field_name):
+    cache_key = _flag_cache_key(flag, key_name_setting)
+    entry = cache.get(cache_key)
+    flag_mdtime =  flag.modified.replace(microsecond=0)
+    if (entry is None or
+            pydatetime.fromtimestamp(entry['timestamp']) < flag_mdtime):
+        ids = getattr(flag, field_name).all().values_list('id', flat=True)
+        entry = {
+            'timestamp': int(time.mktime(flag.modified.timetuple())),
+            'ids': set(ids),
+        }
+        cache.set(cache_key, entry)
+    return entry['ids']
+
+
+def get_flag_user_ids(flag):
+    return _get_flag_idset(flag, 'FLAG_USER_IDS_CACHE_KEY', 'users')
+
+
+def get_flag_group_ids(flag):
+    return _get_flag_idset(flag, 'FLAG_GROUP_IDS_CACHE_KEY', 'groups')
 
 
 def uncache_flag(**kwargs):
     flag = kwargs.get('instance')
-    data = {
-        keyfmt(get_setting('FLAG_CACHE_KEY'), flag.name): None,
-        keyfmt(get_setting('FLAG_USERS_CACHE_KEY'), flag.name): None,
-        keyfmt(get_setting('FLAG_GROUPS_CACHE_KEY'), flag.name): None,
-        keyfmt(get_setting('ALL_FLAGS_CACHE_KEY')): None
-    }
-    cache.set_many(data, 5)
+    keys = [
+        _flag_cache_key(flag, s)
+        for s in ('FLAG_USER_IDS_CACHE_KEY', 'FLAG_GROUP_IDS_CACHE_KEY')]
+    cache.delete_many(keys)
 
 post_save.connect(uncache_flag, sender=Flag, dispatch_uid='save_flag')
 post_delete.connect(uncache_flag, sender=Flag, dispatch_uid='delete_flag')
@@ -138,33 +152,3 @@ m2m_changed.connect(uncache_flag, sender=Flag.users.through,
                     dispatch_uid='m2m_flag_users')
 m2m_changed.connect(uncache_flag, sender=Flag.groups.through,
                     dispatch_uid='m2m_flag_groups')
-
-
-def cache_sample(**kwargs):
-    sample = kwargs.get('instance')
-    cache.add(keyfmt(get_setting('SAMPLE_CACHE_KEY'), sample.name), sample)
-
-
-def uncache_sample(**kwargs):
-    sample = kwargs.get('instance')
-    cache.set(keyfmt(get_setting('SAMPLE_CACHE_KEY'), sample.name), None, 5)
-    cache.set(keyfmt(get_setting('ALL_SAMPLES_CACHE_KEY')), None, 5)
-
-post_save.connect(uncache_sample, sender=Sample, dispatch_uid='save_sample')
-post_delete.connect(uncache_sample, sender=Sample,
-                    dispatch_uid='delete_sample')
-
-
-def cache_switch(**kwargs):
-    switch = kwargs.get('instance')
-    cache.add(keyfmt(get_setting('SWITCH_CACHE_KEY'), switch.name), switch)
-
-
-def uncache_switch(**kwargs):
-    switch = kwargs.get('instance')
-    cache.set(keyfmt(get_setting('SWITCH_CACHE_KEY'), switch.name), None, 5)
-    cache.set(keyfmt(get_setting('ALL_SWITCHES_CACHE_KEY')), None, 5)
-
-post_delete.connect(uncache_switch, sender=Switch,
-                    dispatch_uid='delete_switch')
-post_save.connect(uncache_switch, sender=Switch, dispatch_uid='save_switch')

@@ -33,7 +33,6 @@ class WaffleTemplateTests(TestCase):
         self.assertContains(response, 'flag_var off')
         self.assertContains(response, 'switch_var off')
         self.assertContains(response, 'sample_var')
-        self.assertContains(response, 'window.waffle =')
 
     def test_get_nodes_by_type(self):
         """WaffleNode.get_nodes_by_type() should correctly find all child nodes"""
@@ -66,4 +65,3 @@ class WaffleTemplateTests(TestCase):
         self.assertContains(response, 'flag off')
         self.assertContains(response, 'switch off')
         self.assertContains(response, 'sample')
-        self.assertContains(response, 'window.waffle =')
